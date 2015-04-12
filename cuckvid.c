@@ -372,30 +372,16 @@ void cuck_decode_block(uint8_t *raw, uint8_t *raw_src, uint8_t *cuck)
 	uint32_t mask1 = 0x38C738C7U;
 	uint32_t  tip1 = 0x41084108U;
 
-	// each of those Us are vital!
+	// the U is vital here!
 	uint32_t addmaskb = 0x01010101U*cuck[1];
 	uint32_t addmask0 = addmaskb & mask0;
 	uint32_t addmask1 = addmaskb & mask1;
-	uint32_t add0b = addmaskb & cuck_pattab_x[(cuck[0]&7)*2+0];
-	uint32_t add1b = addmaskb & cuck_pattab_x[(cuck[0]&7)*2+1];
-	uint8_t flipper = cuck_pattab_y[(cuck[0]>>3)&7];
-	uint32_t add00 = add0b&mask0;
-	uint32_t add01 = add0b&mask1;
-	uint32_t add10 = add1b&mask0;
-	uint32_t add11 = add1b&mask1;
+	uint32_t inv0 = cuck_dectab[cuck[0]*2 + 0];
+	uint32_t inv1 = cuck_dectab[cuck[0]*2 + 1];
+	uint32_t inv = inv0;
 
 	for(i = 0, y = 0; y < 8; y++, i += 8)
 	{
-		if(flipper&1)
-		{
-			add00 ^= addmask0;
-			add01 ^= addmask1;
-			add10 ^= addmask0;
-			add11 ^= addmask1;
-		}
-
-		flipper >>= 1;
-
 #ifdef CUCK_DEINT
 		uint32_t v0b = *(uint32_t *)(raw_src + 0);
 		uint32_t v1b = *(uint32_t *)(raw_src + 4);
@@ -407,6 +393,14 @@ void cuck_decode_block(uint8_t *raw, uint8_t *raw_src, uint8_t *cuck)
 		uint32_t v01 = (v0b&mask1)+tip1;
 		uint32_t v10 = (v1b&mask0)+tip0;
 		uint32_t v11 = (v1b&mask1)+tip1;
+
+		uint32_t add0b = addmaskb & cuck_dectab_tobytes[inv&15]; inv >>= 4;
+		uint32_t add1b = addmaskb & cuck_dectab_tobytes[inv&15]; inv >>= 4;
+		if(y == 3) inv = inv1;
+		uint32_t add00 = add0b&mask0;
+		uint32_t add01 = add0b&mask1;
+		uint32_t add10 = add1b&mask0;
+		uint32_t add11 = add1b&mask1;
 
 		v00 += add00;
 		v01 += add01;
@@ -433,38 +427,14 @@ void cuck_encode_block(uint8_t *raw, uint8_t *img, uint8_t *cuck)
 	int x, y, i, j;
 	
 	// get mean of each
-	int32_t mean_img_r[64];
-	int32_t mean_img_g[64];
-	int32_t mean_img_b[64];
 
-	int32_t mean_raw_r[64];
-	int32_t mean_raw_g[64];
-	int32_t mean_raw_b[64];
-
-	int32_t mean_raw[64];
-	int32_t mean_count[64];
-
-	for(i = 0; i < 64; i++)
-	{
-		mean_count[i] = 0;
-
-		mean_img_r[i] = 0;
-		mean_img_g[i] = 0;
-		mean_img_b[i] = 0;
-
-		mean_raw_r[i] = 0;
-		mean_raw_g[i] = 0;
-		mean_raw_b[i] = 0;
-	}
+	int32_t mean_raw[170];
 
 	int biggest_diff = -1;
-	int best_filter = (filtsel == 0 ? 1 : 0);
+	int best_filter = 0;//(filtsel == 0 ? 1 : 0);
 
-	for(i = 0; i < 64; i++)
+	for(i = 0; i < CUCK_DECTYPES; i++)
 	{
-		if(i != 1 && ((i&7) == 1 || ((i>>3)&7) == 1))
-			continue;
-
 		if(i == 1 ? best_filter != 1 : best_filter == 1)
 			continue;
 
@@ -476,13 +446,21 @@ void cuck_encode_block(uint8_t *raw, uint8_t *img, uint8_t *cuck)
 		int32_t min_img_g = 7;
 		int32_t min_img_b = 7;
 
+		int32_t mean_img_r = 0;
+		int32_t mean_img_g = 0;
+		int32_t mean_img_b = 0;
+
+		int32_t mean_raw_r = 0;
+		int32_t mean_raw_g = 0;
+		int32_t mean_raw_b = 0;
+
+		int32_t mean_count = 0;
+
 		for(j = 0, y = 0; y < 8; y++)
 		for(x = 0; x < 8; x++, j++)
 		{
-			if(i!=1 && (((cuck_pattab_x[(i&7)*2 + ((x>>2)&1)] >> ((x&3)*8))&0xFF) == 0
-				? 0
-				: 1) == ((cuck_pattab_y_sub[i>>3]>>y)&1))
-					continue;
+			if(i!=1 && ((cuck_dectab[i*2 + ((y>>2)&1)]>>(j&31))&1) == 0)
+				continue;
 
 			int val_img = img[j];
 			int val_raw = raw[j];
@@ -498,57 +476,60 @@ void cuck_encode_block(uint8_t *raw, uint8_t *img, uint8_t *cuck)
 			if(max_img_b < ib) max_img_b = ib;
 			if(min_img_b > ib) min_img_b = ib;
 
-			mean_img_r[i] += (val_img>>6)&3;
-			mean_img_g[i] += (val_img>>3)&7;
-			mean_img_b[i] += (val_img>>0)&7;
+			int rr = (val_raw>>6)&3;
+			int rg = (val_raw>>3)&7;
+			int rb = (val_raw>>0)&7;
 
-			mean_raw_r[i] += (val_raw>>6)&3;
-			mean_raw_g[i] += (val_raw>>3)&7;
-			mean_raw_b[i] += (val_raw>>0)&7;
+			mean_img_r += ir;
+			mean_img_g += ig;
+			mean_img_b += ib;
 
-			mean_count[i] += 1;
+			mean_raw_r += rr;
+			mean_raw_g += rg;
+			mean_raw_b += rb;
+
+			mean_count += 1;
 		}
 
-		mean_raw_r[i] = (((mean_raw_r[i] + (mean_count[i]/2))/mean_count[i])&3);
-		mean_raw_g[i] = (((mean_raw_g[i] + (mean_count[i]/2))/mean_count[i])&7);
-		mean_raw_b[i] = (((mean_raw_b[i] + (mean_count[i]/2))/mean_count[i])&7);
+		mean_raw_r = (((mean_raw_r + (mean_count/2))/mean_count)&3);
+		mean_raw_g = (((mean_raw_g + (mean_count/2))/mean_count)&7);
+		mean_raw_b = (((mean_raw_b + (mean_count/2))/mean_count)&7);
 
-		mean_img_r[i] = (((mean_img_r[i] + (mean_count[i]/2))/mean_count[i])&3);
-		mean_img_g[i] = (((mean_img_g[i] + (mean_count[i]/2))/mean_count[i])&7);
-		mean_img_b[i] = (((mean_img_b[i] + (mean_count[i]/2))/mean_count[i])&7);
+		mean_img_r = (((mean_img_r + (mean_count/2))/mean_count)&3);
+		mean_img_g = (((mean_img_g + (mean_count/2))/mean_count)&7);
+		mean_img_b = (((mean_img_b + (mean_count/2))/mean_count)&7);
 
 		// do diff
 		if(i != 1)
 		{
-			mean_raw_r[i] = (mean_raw_r[i] - mean_img_r[i]);
-			mean_raw_g[i] = (mean_raw_g[i] - mean_img_g[i]);
-			mean_raw_b[i] = (mean_raw_b[i] - mean_img_b[i]);
+			mean_raw_r = (mean_raw_r - mean_img_r);
+			mean_raw_g = (mean_raw_g - mean_img_g);
+			mean_raw_b = (mean_raw_b - mean_img_b);
 
-			if(min_img_r + mean_raw_r[i] < 0) mean_raw_r[i] = -min_img_r;
-			if(max_img_r + mean_raw_r[i] > 3) mean_raw_r[i] = 3-max_img_r;
-			if(min_img_g + mean_raw_g[i] < 0) mean_raw_g[i] = -min_img_g;
-			if(max_img_g + mean_raw_g[i] > 7) mean_raw_g[i] = 7-max_img_g;
-			if(min_img_b + mean_raw_b[i] < 0) mean_raw_b[i] = -min_img_b;
-			if(max_img_b + mean_raw_b[i] > 7) mean_raw_b[i] = 7-max_img_b;
+			if(min_img_r + mean_raw_r < 0) mean_raw_r = -min_img_r;
+			if(max_img_r + mean_raw_r > 3) mean_raw_r = 3-max_img_r;
+			if(min_img_g + mean_raw_g < 0) mean_raw_g = -min_img_g;
+			if(max_img_g + mean_raw_g > 7) mean_raw_g = 7-max_img_g;
+			if(min_img_b + mean_raw_b < 0) mean_raw_b = -min_img_b;
+			if(max_img_b + mean_raw_b > 7) mean_raw_b = 7-max_img_b;
 		}
 
 		int cdiff = 0;
-		cdiff += (mean_raw_r[i]*mean_raw_r[i]);
-		cdiff += (mean_raw_g[i]*mean_raw_g[i]);
-		cdiff += (mean_raw_b[i]*mean_raw_b[i]);
-
+		cdiff += (mean_raw_r*mean_raw_r);
+		cdiff += (mean_raw_g*mean_raw_g);
+		cdiff += (mean_raw_b*mean_raw_b);
 		if(cdiff > biggest_diff)
 		{
 			best_filter = i;
 			biggest_diff = cdiff;
 		}
 
-		mean_raw_r[i] &= 3;
-		mean_raw_g[i] &= 7;
-		mean_raw_b[i] &= 7;
+		mean_raw_r &= 3;
+		mean_raw_g &= 7;
+		mean_raw_b &= 7;
 
 		// merge
-		mean_raw[i] = (mean_raw_r[i]<<6) | (mean_raw_g[i]<<3) | (mean_raw_b[i]<<0);
+		mean_raw[i] = (mean_raw_r<<6) | (mean_raw_g<<3) | (mean_raw_b<<0);
 	}
 
 	cuck[0] = best_filter;
@@ -616,6 +597,7 @@ void cuck_encode(uint8_t *raw_buf, uint8_t *img_buf, uint8_t *cuck_buf)
 
 	filtsel = filtsel_base;
 	filtsel_base = (filtsel_base + 37) % 137;
+#pragma omp parallel for
 	for(i = 0; i < 20*30; i++)
 		cuck_encode_block(raw_buf + 8*8*i, img_buf + 8*8*i, cuck_buf + 2*i);
 }
