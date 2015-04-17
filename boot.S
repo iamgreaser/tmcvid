@@ -44,11 +44,11 @@ init_beg:
 	.align 5
 init_end:
 vid01s:
-	.incbin "tmc-adpcm.wav"
+	.incbin "badapple-adpcm.wav"
 vid01s_end:
 	.align 4
 vid01v:
-	.incbin "tmc-vid.bin"
+	.incbin "badapple-vid.bin"
 vid01v_end:
 	.align 4
 

@@ -17,6 +17,7 @@ uint8_t tc_buf[240*160*4];
 uint8_t raw_buf[240*160];
 uint8_t img_buf[240*160];
 uint8_t cuck_buf[30*20*2];
+//uint8_t cuck_buf[240*160];
 
 void on_alarm(int sig)
 {
@@ -43,7 +44,7 @@ int main(int argc, char *argv[])
 	//setitimer(ITIMER_REAL, &it, NULL);
 
 	int draw_frame_counter = 1;
-	int draw_frame_counter_max = 20;
+	int draw_frame_counter_max = 1;
 	
 	for(;;)
 	{
